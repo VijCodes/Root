@@ -1,0 +1,220 @@
+---
+title: "Root"
+author: "Vijay"
+date: "24 February 2018"
+output: html_document
+---
+Data Quality Checks:
+
+Dealing with missing values:
+
+The first step before proceeding to any sort of analysis is cleaning data properly.
+
+Loading data
+
+```{r}
+setwd("C:/Users/katta/Desktop/data_analyst_work_sample")
+dat = readRDS('data/sample_trip.rds')
+
+```
+
+Presence of missing values will be problematic for the analysis. Let us deal with them if they are any.
+
+```{r}
+colnas = apply(dat, 2, function(x) sum(is.na(x))) # checking for na's columnwise
+colnas
+
+i = which(is.na(dat$speed)) # checking for a particular row of na
+i
+dat$speed[899] # conforming the location
+```
+
+Since there is only one missing value the data is fairly clean in terms of na's. For the further analysis let us use moving average value instead of missing value.
+
+```{r}
+dat$speed[899]=dat$speed[898]+dat$speed[900]
+colnas = apply(dat, 2, function(x) sum(is.na(x))) # checking the data 
+colnas
+```
+
+Note that completely removing missing value observations may not be a good option here as it complicates further calculations on accelaration and moving average. Now, our data is free of missing values. 
+
+Checking for outliers:
+
+Errors might creep into data because of many external factors. One way to check for them is to check for outliers. Although we cannot be sure of all outliers being errors, by removing them we can increase the accuracy of the analysis.
+
+```{r}
+outlier_values1 <- boxplot.stats(dat$speed)$out  # outlier values.
+boxplot(dat$speed, main="Prices", boxwex=0.1)
+mtext(paste("Outliers: ", paste(outlier_values1, collapse=", ")), cex=0.6)
+
+length(outlier_values1) # number of outliers
+
+
+```
+
+
+There are no outliers in the data.
+
+```{r}
+plot(density(dat$speed))
+summary(as.factor(dat$timestamp))
+plot(density(dat$longitude))
+plot(density(dat$latitude))
+plot(density(dat$heading))
+```
+
+From the figure, we could see that velocity distribution is left-skewed. It has to be normalised in case of building some predictive models. Longitude certainly has some spurious values in it. Distribution of timestamp also indicates some errors.
+
+```{r}
+dat$latitude[dat$latitude<39.4] # checking for values
+which(dat$latitude<39.4) # finding indexes
+dat$latitude[495:505] # observing the pattern
+
+dat$longitude[dat$longitude>(-82.2)] # checking for values
+which(dat$longitude>(-82.2)) # finding indexes
+dat$longitude[495:505] # observing the pattern
+```
+
+
+
+From the pattern, we could see that the three values are meant to be 39.9xx instead of 39.2XX in case of latitudes. In case of longitudes, it should be 83.xx instead of 82.xx.
+Let us correct the data manually.
+
+```{r}
+dat$latitude[500:502]=c(39.99031,39.99039,39.99046)
+dat$longitude[500:502] = c(-83.02580,-83.02582,-83.02583)
+
+```
+
+
+From the summary on time stamp, we could see that there are two values of 151623213. Let's correct it before further analysis.
+```{r}
+dat$timestamp[400] = 1516232211
+```
+
+
+Corrected heading values:
+
+Heading values where the velocity is zero was always zero. But in reality, we know that car has stopped. So in those cases, we can use previous heading value where the heading is non-zero in place of zero.
+
+
+```{r}
+i = which(dat$heading==0)
+for (x in i ) {
+  dat$heading[x] = dat$heading[x-1]
+}
+```
+
+
+
+
+
+
+Problem 1: Analyze the enclosed trip data (sample trip.csv) and provide the following summary details (showing work via commented code): . Total trip duration [s] . Total trip distance, computed in two ways [mi] . Turns larger than 60 degrees (count, as well as their location and time) Note, be on the lookout for all sorts of bad data, including missing data, suspicious values, strange formatting, etc.
+
+```{r}
+Total_trip_duration = length(dat$timestamp)-1
+
+```
+
+Total trip duration is 1474 seconds
+
+Calculating distance:
+
+One way of calculating distance is to find average velocity during the trip and multiplying by trip duration. Another way is to find the distances using geospatial coordinates.
+
+```{r}
+library(geosphere)
+dat[2:1475,7]=dat[1:1474,3]
+dat[2:1475,8]=dat[1:1474,4]
+dat[2:1475,9]=apply(dat[2:1475,], 1, function(x) distm(c(x[4], x[3]), c(x[8], x[7]), fun = distHaversine))
+dis = sum(dat[2:1475,9]) # 13210.597 meters 
+
+dist = (sum(dat[,5])/1475)*1474 # 11471.407 meters
+
+```
+
+Distance calculated with velocities = 13210.597 meters = 8.20868 miles
+
+Distance calculated with geometric coordinates = 11471.407 meters = 7.12800 miles 
+
+Calculating turns:
+
+```{r}
+dat$turn[2:length(dat$accuracy)]= diff(dat$heading, lag = 1)
+turns = dat[(abs(dat$turn)>60 & abs(dat$turn)<300 ),c(3,4,6,10)]
+turns = turns[-1,] # removing missing value row
+```
+
+
+Looks like there are 7 turns. Note that turns greater than 360 implies the turn less than 60 degrees. Dataset "turns" contain details about their location and time.
+
+
+
+Problem 2: Run the enclosed R script (mock function.R) and troubleshoot the code to eliminate the errors and/or bad values. If possible, clean the data so that the code gives reasonable results. In addition, comment on the two subfunctions, whether or not they are effective in completing their specified purpose, and how they could be improved.
+
+Mock function:
+
+
+```{r}
+
+library(dplyr)
+
+
+sample_trip = readRDS('data/sample_trip.rds')
+
+
+
+sample_trip = dat # lets use clean data
+
+get_acceleration = function(time_vect, speed_vect, lag = 1) {
+  dt = diff(time_vect, lag = lag)
+  dv = diff(speed_vect, lag = lag)
+  accel = dv/dt
+  return(accel)
+}
+
+fix_speed = function(time_vect, speed_vect, 
+                     accuracy_vect, accuracy_thresh = 25) {
+  bad_accuracy = accuracy_vect > accuracy_thresh
+  start_bad = min(which(bad_accuracy))
+  end_bad = max(which(bad_accuracy))
+  new_speed = approx(x = time_vect[c(start_bad-1, end_bad+1)],
+                     y = speed_vect[c(start_bad-1, end_bad+1)],
+                     xout = time_vect[bad_accuracy])$y
+  speed_vect[bad_accuracy] = new_speed
+  return(speed_vect) 
+}
+
+sample_trip = sample_trip %>% 
+  mutate(smooth_speed = fix_speed(timestamp, speed, accuracy))
+
+summary = sample_trip %>%
+  summarize(max_speed = max(speed),
+            max_accel_lag1 = get_acceleration(timestamp, smooth_speed, lag = 1) %>% max,
+            max_accel_lag2 = get_acceleration(timestamp, smooth_speed, lag = 2) %>% max,
+            max_accel_lag3 = get_acceleration(timestamp, smooth_speed, lag = 3) %>% max)
+
+print(summary)
+
+
+```
+
+
+
+First function "get_acceleration"" calculates the acceleration at a point based on velocity difference over past few seconds. The number of seconds can be given by argument "lag".
+
+The second function "fix_speed" tries to approximate the velocities with bad accuracy by fitting a line. It takes the observations starting from first inaccurate observation to the last such observation including one accurate observation on either side. The problem arises when there is a chunk of inaccurate observations all at one place. In that case, the function will interpolate the line based on bad observations leading to inaccurate results.
+
+One improvement is to consider only accurate values for interpolation and approximating the inaccurate values based on the line. Another thing is to approximate the velocity based on geospatial coordinates ( assuming given accuracy in the data is meant to be only for speed calculation).
+
+
+
+
+
+
+
+
+
+
